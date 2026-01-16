@@ -341,9 +341,10 @@ class MattingEngine:
                 # Default to MobileNet counts
                 channels_map = {"r1i": 16, "r2i": 20, "r3i": 40, "r4i": 64}
                 
-                # ResNet50 counts (check if model is resnet based on name or known mapping)
+                # ResNet50 counts (verified from model inspection)
+                # Note: These differ from standard ResNet block widths
                 if "resnet" in self.model_name.lower() or "rvm_resnet" in self.model_name.lower():
-                     channels_map = {"r1i": 256, "r2i": 512, "r3i": 1024, "r4i": 2048}
+                     channels_map = {"r1i": 16, "r2i": 32, "r3i": 64, "r4i": 128}
                 
                 channels = channels_map.get(name, 16)
                 

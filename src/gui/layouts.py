@@ -367,3 +367,64 @@ def create_about_layout() -> list:
     ]
     
     return layout
+
+
+def create_advanced_layout(current_state: dict) -> list:
+    """
+    Create the advanced processing settings layout.
+    
+    Args:
+        current_state: Dictionary of current advanced settings.
+        
+    Returns:
+        Layout definition.
+    """
+    layout = [
+        [sg.Text("Advanced Processing", font=FONTS["title"])],
+        [sg.Text("Tune algorithms to improve matting quality.", font=FONTS["small"], 
+                text_color=COLORS["text_muted"])],
+        
+        [sg.HorizontalSeparator(pad=(0, 10))],
+        
+        # Preprocessing
+        [sg.Frame("Preprocessing (Before Inference)", [
+            [sg.Text("Help the model see the subject better.", font=FONTS["small"], text_color=COLORS["accent"])],
+            
+            [sg.Text("Gamma Correction:", size=(16, 1)),
+             sg.Slider((0.5, 2.5), default_value=current_state.get("gamma", 1.0), resolution=0.1,
+                      orientation="h", size=(20, 10), key="-ADV-GAMMA-")],
+            
+            [sg.Text("Denoising Strength:", size=(16, 1)),
+             sg.Slider((0, 10), default_value=current_state.get("denoise", 0.0), resolution=1.0,
+                      orientation="h", size=(20, 10), key="-ADV-DENOISE-")],
+            
+            [sg.Checkbox("Auto-Contrast (CLAHE)", default=current_state.get("clahe", False),
+                        key="-ADV-CLAHE-", tooltip="Enhance local contrast")],
+        ], pad=(0, 10), expand_x=True)],
+        
+        # Postprocessing
+        [sg.Frame("Postprocessing (Refinement)", [
+            [sg.Text("Clean up the alpha matte.", font=FONTS["small"], text_color=COLORS["accent"])],
+            
+            [sg.Text("Edge Cleanup:", size=(16, 1)),
+             sg.Slider((0, 5), default_value=current_state.get("morph", 0), resolution=1.0,
+                      orientation="h", size=(20, 10), key="-ADV-MORPH-",
+                      tooltip="Morphological opening/closing to remove noise")],
+            
+            [sg.Checkbox("Remove Floating Islands", default=current_state.get("island", False),
+                        key="-ADV-ISLAND-", tooltip="Keep only the largest object")],
+            
+            [sg.Checkbox("Guided Filter Refinement", default=current_state.get("guided", False),
+                        key="-ADV-GUIDED-", tooltip="Snap edges to image boundaries (Slower)")],
+        ], pad=(0, 10), expand_x=True)],
+        
+        [sg.HorizontalSeparator(pad=(0, 10))],
+        
+        # Buttons
+        [sg.Button("Apply & Close", key="-ADV-APPLY-", size=(14, 1),
+                  button_color=(COLORS["text"], COLORS["success"])),
+         sg.Push(),
+         sg.Button("Cancel", key="-ADV-CANCEL-", size=(10, 1))],
+    ]
+    
+    return layout

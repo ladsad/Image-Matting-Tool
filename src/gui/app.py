@@ -12,6 +12,14 @@ import FreeSimpleGUI as sg
 from PIL import Image
 
 from ..engine import MattingEngine
+from ..engine.processing import (
+    apply_gamma_correction,
+    apply_auto_contrast,
+    apply_denoising,
+    refine_alpha_morphology,
+    remove_islands,
+    refine_edges_guided,
+)
 from ..utils import ConfigManager, load_image, save_image
 from ..utils.image_utils import (
     apply_alpha_to_image,
@@ -25,6 +33,7 @@ from .layouts import (
     create_batch_layout,
     create_settings_layout,
     create_about_layout,
+    create_advanced_layout,
     get_theme,
     FONTS,
 )
@@ -60,6 +69,16 @@ class MattingApp:
         # Display state
         self.comparison_ratio = 1.0  # 0.0=Original, 1.0=Result
         self.show_alpha = False
+        
+        # Advanced Processing State
+        self.adv_settings = {
+            "gamma": 1.0,
+            "denoise": 0.0,
+            "clahe": False,
+            "morph": 0,
+            "island": False,
+            "guided": False,
+        }
         
         self.is_processing = False
         self.selected_model = "modnet"  # Default model
@@ -325,14 +344,48 @@ class MattingApp:
         custom_color = self.window["-CUSTOM-COLOR-"].get()
         background = self._get_background_color(bg_option, custom_color)
         
+        # Copy settings to avoid race conditions
+        current_settings = self.adv_settings.copy()
+        
         def process_thread():
             try:
+                # Preprocessing
+                processed_input = self.current_image.copy()
+                
+                # Gamma
+                if current_settings["gamma"] != 1.0:
+                    processed_input = apply_gamma_correction(processed_input, current_settings["gamma"])
+                
+                # Denoise
+                if current_settings["denoise"] > 0:
+                    processed_input = apply_denoising(processed_input, current_settings["denoise"])
+                
+                # CLAHE
+                if current_settings["clahe"]:
+                    processed_input = apply_auto_contrast(processed_input)
+                    
                 # Process image
                 alpha, timing = self.engine.process_image(
-                    self.current_image,
+                    processed_input,
                     quality=quality,
                     return_timing=True,
                 )
+                
+                # Postprocessing
+                # Morphology
+                if current_settings["morph"] > 0:
+                    alpha = refine_alpha_morphology(
+                        alpha, 
+                        kernel_size=int(current_settings["morph"] * 2 + 1)
+                    )
+                
+                # Island Removal
+                if current_settings["island"]:
+                    alpha = remove_islands(alpha)
+                
+                # Guided Filter
+                if current_settings["guided"]:
+                    alpha = refine_edges_guided(processed_input, alpha)
                 
                 # Apply background
                 result = apply_alpha_to_image(self.current_image, alpha, background)
@@ -447,6 +500,34 @@ class MattingApp:
             )
             self._update_preview("-OUTPUT-PREVIEW-", self.current_result)
     
+    def _show_advanced_window(self) -> None:
+        """Show the advanced processing settings window."""
+        layout = create_advanced_layout(self.adv_settings)
+        adv_window = sg.Window(
+            "Advanced Processing", 
+            layout, 
+            finalize=True,
+            modal=True 
+        )
+        
+        while True:
+            event, values = adv_window.read()
+            
+            if event in (sg.WIN_CLOSED, "-ADV-CANCEL-"):
+                break
+                
+            elif event == "-ADV-APPLY-":
+                # Save settings
+                self.adv_settings["gamma"] = values["-ADV-GAMMA-"]
+                self.adv_settings["denoise"] = values["-ADV-DENOISE-"]
+                self.adv_settings["clahe"] = values["-ADV-CLAHE-"]
+                self.adv_settings["morph"] = values["-ADV-MORPH-"]
+                self.adv_settings["island"] = values["-ADV-ISLAND-"]
+                self.adv_settings["guided"] = values["-ADV-GUIDED-"]
+                break
+        
+        adv_window.close()
+
     def _show_batch_window(self) -> None:
         """Show the batch processing window with full functionality."""
         from .layouts import create_batch_layout
@@ -696,6 +777,9 @@ class MattingApp:
             
             elif event == "-BATCH-":
                 self._show_batch_window()
+            
+            elif event == "-ADVANCED-":
+                self._show_advanced_window()
             
             elif event == "-SETTINGS-":
                 self._show_settings_window()

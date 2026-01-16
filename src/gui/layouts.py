@@ -191,6 +191,7 @@ def create_main_layout() -> list:
     toolbar = [
         sg.Button("Batch Mode", key="-BATCH-", size=(12, 1)),
         sg.Button("Settings", key="-SETTINGS-", size=(10, 1)),
+        sg.Button("Advanced...", key="-ADVANCED-", size=(10, 1)),
         sg.Push(),
         sg.Text("v0.1.0", font=FONTS["small"], text_color=COLORS["text_muted"]),
     ]

@@ -4,7 +4,7 @@ import io
 import threading
 import traceback
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 import cv2
 import numpy as np
@@ -53,6 +53,9 @@ class MattingApp:
         self.current_alpha: Optional[np.ndarray] = None
         self.current_result: Optional[np.ndarray] = None
         self.current_path: Optional[Path] = None
+        
+        # Background state
+        self.current_bg_image: Optional[np.ndarray] = None
         
         # Display state
         self.comparison_ratio = 1.0  # 0.0=Original, 1.0=Result
@@ -131,8 +134,8 @@ class MattingApp:
     
 
     
-    def _get_background_color(self, bg_option: str, custom_color: str) -> Optional[Tuple[int, int, int]]:
-        """Get background color tuple from option."""
+    def _get_background_color(self, bg_option: str, custom_color: str) -> Optional[Union[Tuple[int, int, int], np.ndarray]]:
+        """Get background color tuple or image from option."""
         if bg_option == "Transparent":
             return None
         elif bg_option == "White":
@@ -146,6 +149,9 @@ class MattingApp:
                 return tuple(int(color[i:i+2], 16) for i in (0, 2, 4))
             except:
                 return None
+        elif bg_option == "Custom Image..." and self.current_bg_image is not None:
+            return self.current_bg_image
+            
         return None
     
     def _update_preview(self, key: str, image: Optional[np.ndarray]) -> None:
@@ -164,18 +170,29 @@ class MattingApp:
                 
             elif self.comparison_ratio < 1.0 and self.current_image is not None and self.current_result is not None:
                 # Blend Original and Result
-                # Ensure same size (result might be cropped/resized if bug, but usually same)
-                if self.current_image.shape == self.current_result.shape:
+                # Ensure same size
+                if self.current_image.shape[:2] == self.current_result.shape[:2]:
+                   img_src = self.current_image
+                   img_dst = self.current_result
+                   
+                   # Handle channel mismatch (e.g. RGB vs RGBA)
+                   src_channels = 1 if img_src.ndim == 2 else img_src.shape[2]
+                   dst_channels = 1 if img_dst.ndim == 2 else img_dst.shape[2]
+                   
+                   if src_channels != dst_channels:
+                       # Promote to RGBA if any has alpha
+                       if src_channels == 3:
+                           img_src = cv2.cvtColor(img_src, cv2.COLOR_RGB2RGBA)
+                       if dst_channels == 3:
+                           img_dst = cv2.cvtColor(img_dst, cv2.COLOR_RGB2RGBA)
+                   
+                   # Blend
                    alpha = self.comparison_ratio
                    beta = 1.0 - alpha
-                   # current_image is original, current_result is matte on BG
-                   # Slider 0 = Original, 100 = Result
-                   # addWeighted: dst = src1*alpha + src2*beta + gamma
-                   # We want 0.0 -> Original (beta=1), 1.0 -> Result (alpha=1)
-                   # Fix variable names to avoid confusion
+                   
                    display_image = cv2.addWeighted(
-                       self.current_result, alpha,
-                       self.current_image, beta,
+                       img_dst, alpha,
+                       img_src, beta,
                        0.0
                    )
         
@@ -403,14 +420,28 @@ class MattingApp:
         """Handle background option change."""
         bg_option = values["-BACKGROUND-"]
         
-        # Enable/disable color picker
-        is_custom = bg_option == "Custom Color..."
-        self.window["-COLOR-PICKER-"].update(disabled=not is_custom)
+        # Manage UI state
+        is_custom_color = bg_option == "Custom Color..."
+        is_custom_image = bg_option == "Custom Image..."
+        
+        self.window["-COLOR-PICKER-"].update(visible=True, disabled=not is_custom_color)
+        if is_custom_image:
+             # Hide color picker, show image browse
+             self.window["-COLOR-PICKER-"].update(visible=False)
+             self.window["-BG-IMAGE-BROWSE-"].update(visible=True)
+        else:
+             self.window["-BG-IMAGE-BROWSE-"].update(visible=False)
+
         
         # If result exists, recomposite with new background
         if self.current_alpha is not None and self.current_image is not None:
             custom_color = values["-CUSTOM-COLOR-"]
             background = self._get_background_color(bg_option, custom_color)
+            
+            # If custom image selected but not loaded, don't update yet
+            if is_custom_image and self.current_bg_image is None:
+                return
+                
             self.current_result = apply_alpha_to_image(
                 self.current_image, self.current_alpha, background
             )
@@ -651,6 +682,17 @@ class MattingApp:
                 # Custom color selected
                 if self.current_alpha is not None:
                     self._handle_background_change(values)
+            
+            elif event == "-BG-IMAGE-INPUT-":
+                # Custom background image selected
+                file_path = values["-BG-IMAGE-INPUT-"]
+                if file_path:
+                    try:
+                        self.current_bg_image = load_image(file_path)
+                        if self.current_alpha is not None:
+                             self._handle_background_change(values)
+                    except Exception as e:
+                        sg.popup_error(f"Failed to load background image:\n{e}")
             
             elif event == "-BATCH-":
                 self._show_batch_window()

@@ -234,11 +234,16 @@ def apply_alpha_to_image(
         # Solid color background
         bg = np.full((h, w, 3), background, dtype=np.uint8)
     else:
-        # Background image
+        # Background image (np.ndarray)
+        # Resize background to match foreground dimensions
         bg = cv2.resize(background, (w, h), interpolation=cv2.INTER_LINEAR)
-        if bg.shape[2] == 4:
-            bg = bg[:, :, :3]
-    
+        
+        # Ensure RGB
+        if bg.ndim == 2:
+            bg = cv2.cvtColor(bg, cv2.COLOR_GRAY2RGB)
+        elif bg.shape[2] == 4:
+            bg = cv2.cvtColor(bg, cv2.COLOR_RGBA2RGB)
+            
     # Composite: result = fg * alpha + bg * (1 - alpha)
     alpha_3ch = alpha_norm[:, :, np.newaxis]
     result = (image.astype(np.float32) * alpha_3ch + 

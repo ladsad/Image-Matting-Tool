@@ -126,7 +126,7 @@ def create_main_layout() -> list:
     settings_col3 = sg.Column([
         [sg.Text("Background:", size=(12, 1))],
         [sg.Combo(
-            ["Transparent", "White", "Black", "Custom Color..."],
+            ["Transparent", "White", "Black", "Custom Color...", "Custom Image..."],
             default_value="Transparent",
             key="-BACKGROUND-",
             size=(18, 1),
@@ -137,14 +137,27 @@ def create_main_layout() -> list:
     
     settings_col4 = sg.Column([
         [sg.Text("", size=(8, 1))],  # Spacer
+        # Color Picker
         [sg.ColorChooserButton(
             "Pick Color",
             key="-COLOR-PICKER-",
             target="-CUSTOM-COLOR-",
             size=(10, 1),
             disabled=True,
+            visible=True,
         ),
         sg.Input(key="-CUSTOM-COLOR-", visible=False, enable_events=True)],
+        
+        # Image Picker (Hidden by default)
+        [sg.Input(key="-BG-IMAGE-INPUT-", visible=False, enable_events=True),
+         sg.FileBrowse(
+            "Select Image",
+            key="-BG-IMAGE-BROWSE-",
+            target="-BG-IMAGE-INPUT-",
+            size=(10, 1),
+            visible=False,
+            file_types=(("Image Files", "*.jpg *.jpeg *.png *.webp"),),
+         )],
     ])
     
     settings_frame = sg.Frame(

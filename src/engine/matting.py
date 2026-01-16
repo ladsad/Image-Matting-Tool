@@ -223,38 +223,41 @@ class MattingEngine:
         pixel_values = np.transpose(pixel_values, (2, 0, 1))
         pixel_values = np.expand_dims(pixel_values, 0).astype(np.float32)
         
-        # Prepare Trimap Tensor
-        # Inspect model input expectations via session
-        input_names = [inp.name for inp in self.session.get_inputs()]
-        
-        inputs = {}
-        if "pixel_values" in input_names:
-            inputs["pixel_values"] = pixel_values
-            
-        # Handle Trimap
-        # For ViTMatte ONNX, typically expects 4-channel (concat of image + trimap?) NO.
-        # Usually 'trimap' or 'guidance'.
-        
-        trimap_name = "trimap" # Default guess
-        for name in input_names:
-             if "trimap" in name or "guidance" in name:
-                 trimap_name = name
-                 break
-        
-        # ViTMatte trimap processing:
-        # 0 -> Background, 1 -> Unknown, 2 -> Foreground? Or 0-1 float?
-        # HuggingFace Transformers logic:
-        # It maps 0, 128, 255 to classes or keeps as float.
-        # Let's try standard float trimap: 0.0, 0.5, 1.0
+        # Prepare Trimap Tensor (1, 1, H, W)
+        # ViTMatte typically expects concatenated input if only 'pixel_values' is present
+        # Trimap logic: 0 -> Background, 1 -> Unknown, 2 -> Foreground?
+        # Standard: 0.0, 0.5, 1.0 floats.
         
         trimap_float = trimap.astype(np.float32) / 255.0 # (H, W) in [0, 1]
-        
-        # If input shape expects 4 dims (N, C, H, W)
         trimap_tensor = np.expand_dims(trimap_float, 0) # (1, H, W)
         trimap_tensor = np.expand_dims(trimap_tensor, 0) # (1, 1, H, W)
         
-        if trimap_name in input_names:
-            inputs[trimap_name] = trimap_tensor.astype(np.float32)
+        inputs = {}
+        input_names = [inp.name for inp in self.session.get_inputs()]
+        
+        # If only one input named 'pixel_values', it likely expects 4 channels (RGB+Trimap)
+        if len(input_names) == 1 and input_names[0] == "pixel_values":
+            # Check model input shape to be sure
+            # But the error "C: 3 kernel channels: 4" confirms it wants 4 channels.
+            
+            # Concatenate along channel dimension (axis 1)
+            # pixel_values is (1, 3, H, W), trimap_tensor is (1, 1, H, W)
+            combined_input = np.concatenate([pixel_values, trimap_tensor], axis=1)
+            inputs["pixel_values"] = combined_input
+            
+        else:
+            # Fallback for separate inputs (unlikely given inspection)
+            if "pixel_values" in input_names:
+                inputs["pixel_values"] = pixel_values
+            
+            trimap_name = "trimap"
+            for name in input_names:
+                 if "trimap" in name or "guidance" in name:
+                     trimap_name = name
+                     break
+            
+            if trimap_name in input_names:
+                inputs[trimap_name] = trimap_tensor.astype(np.float32)
             
         outputs = self.session.run(None, inputs)
         

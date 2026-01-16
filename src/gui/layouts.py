@@ -1,6 +1,6 @@
 """GUI layout definitions for the Image Matting Tool."""
 
-import PySimpleGUI as sg
+import FreeSimpleGUI as sg
 
 # Color scheme
 COLORS = {

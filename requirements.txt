@@ -1,5 +1,5 @@
 # Core dependencies
-PySimpleGUI>=5.0.0
+FreeSimpleGUI>=5.0.0
 onnxruntime>=1.16.0
 opencv-python>=4.8.0
 Pillow>=10.0.0

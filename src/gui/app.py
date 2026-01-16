@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 import numpy as np
-import PySimpleGUI as sg
+import FreeSimpleGUI as sg
 from PIL import Image
 
 from ..engine import MattingEngine

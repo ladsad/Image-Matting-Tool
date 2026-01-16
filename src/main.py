@@ -3,13 +3,12 @@
 import sys
 from pathlib import Path
 
-# Add src to path if running directly
-if __name__ == "__main__":
-    src_path = Path(__file__).parent
-    if str(src_path) not in sys.path:
-        sys.path.insert(0, str(src_path))
+# Add project root to path for imports to work correctly
+project_root = Path(__file__).parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 
-from gui.app import main
+from src.gui.app import main
 
 if __name__ == "__main__":
     main()

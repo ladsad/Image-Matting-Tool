@@ -137,41 +137,53 @@ class MattingEngine:
         self,
         image: np.ndarray,
         target_size: int
-    ) -> Tuple[np.ndarray, Tuple[int, int]]:
+    ) -> Tuple[np.ndarray, Tuple[int, int], Tuple[int, int]]:
         """
         Preprocess image for model input.
         
+        MODNet expects input dimensions divisible by 32. We resize based on
+        a reference size while maintaining aspect ratio.
+        
         Args:
             image: Input image (H, W, 3) in RGB format.
-            target_size: Target resolution for processing.
+            target_size: Target reference size for the longer dimension.
         
         Returns:
-            Tuple of (preprocessed tensor, original size).
+            Tuple of (preprocessed tensor, original size (W,H), processed size (W,H)).
         """
         original_size = (image.shape[1], image.shape[0])  # (W, H)
-        
-        # Resize to target size (model expects square input typically)
-        # For MODNet, we resize to a size divisible by 32
         h, w = image.shape[:2]
         
-        # Calculate new size maintaining aspect ratio
-        if max(h, w) != target_size:
-            scale = target_size / max(h, w)
-            new_w = int(w * scale)
-            new_h = int(h * scale)
-            # Make divisible by 32
-            new_w = new_w - (new_w % 32)
-            new_h = new_h - (new_h % 32)
-            if new_w == 0:
-                new_w = 32
-            if new_h == 0:
-                new_h = 32
-            image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        # Calculate scale based on reference size
+        # Use the longer dimension as reference
+        ref_size = target_size
+        if max(h, w) < ref_size or min(h, w) > ref_size:
+            if w >= h:
+                im_rh = ref_size
+                im_rw = int(w / h * ref_size)
+            else:
+                im_rw = ref_size
+                im_rh = int(h / w * ref_size)
+        else:
+            im_rh = h
+            im_rw = w
+        
+        # Make dimensions divisible by 32
+        im_rw = im_rw - im_rw % 32
+        im_rh = im_rh - im_rh % 32
+        
+        # Ensure minimum size
+        im_rw = max(im_rw, 32)
+        im_rh = max(im_rh, 32)
+        
+        # Resize image
+        image = cv2.resize(image, (im_rw, im_rh), interpolation=cv2.INTER_AREA)
+        processed_size = (im_rw, im_rh)
         
         # Normalize to [0, 1]
         image = image.astype(np.float32) / 255.0
         
-        # Normalize with ImageNet mean/std (common for pretrained models)
+        # Normalize with ImageNet mean/std (MODNet uses this normalization)
         mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
         std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
         image = (image - mean) / std
@@ -180,7 +192,7 @@ class MattingEngine:
         image = np.transpose(image, (2, 0, 1))
         image = np.expand_dims(image, axis=0)
         
-        return image, original_size
+        return image, original_size, processed_size
     
     def _postprocess(
         self,
@@ -251,7 +263,7 @@ class MattingEngine:
         target_size = QUALITY_CONFIGS[quality]["resolution"]
         
         # Preprocess
-        input_tensor, original_size = self._preprocess(image, target_size)
+        input_tensor, original_size, processed_size = self._preprocess(image, target_size)
         
         # Run inference
         start_time = time.perf_counter()

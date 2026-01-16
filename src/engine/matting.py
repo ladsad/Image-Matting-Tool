@@ -348,12 +348,17 @@ class MattingEngine:
                 
                 channels = channels_map.get(name, 16)
                 
-                # Height/width scale down based on level
+                # Height/width scale down based on level AND downsample ratio
+                # RVM processes internally at (src_h * downsample_ratio, src_w * downsample_ratio)
+                ds_ratio = self._rvm_downsample_ratio
+                base_h = int(new_h * ds_ratio)
+                base_w = int(new_w * ds_ratio)
+                
                 scale_map = {"r1i": 1, "r2i": 2, "r3i": 4, "r4i": 8}
                 scale_factor = scale_map.get(name, 1)
                 
-                rec_h = new_h // scale_factor
-                rec_w = new_w // scale_factor
+                rec_h = max(base_h // scale_factor, 1)
+                rec_w = max(base_w // scale_factor, 1)
                 
                 inputs[name] = np.zeros((1, channels, rec_h, rec_w), dtype=np.float32)
         

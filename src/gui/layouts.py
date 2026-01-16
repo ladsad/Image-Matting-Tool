@@ -201,7 +201,7 @@ def create_batch_layout() -> list:
         
         # Folder selection
         [sg.Text("Input Folder:", size=(12, 1))],
-        [sg.Input(key="-BATCH-INPUT-", size=(50, 1), readonly=True),
+        [sg.Input(key="-BATCH-INPUT-", size=(50, 1), readonly=True, enable_events=True),
          sg.FolderBrowse("Browse", key="-BATCH-INPUT-BROWSE-")],
         
         [sg.Text("Output Folder:", size=(12, 1))],

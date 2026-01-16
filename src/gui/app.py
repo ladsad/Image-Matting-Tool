@@ -377,7 +377,9 @@ class MattingApp:
             self._update_preview("-OUTPUT-PREVIEW-", self.current_result)
     
     def _show_batch_window(self) -> None:
-        """Show the batch processing window."""
+        """Show the batch processing window with full functionality."""
+        from .layouts import create_batch_layout
+        
         layout = create_batch_layout()
         batch_window = sg.Window(
             "Batch Processing",
@@ -386,14 +388,158 @@ class MattingApp:
             finalize=True,
         )
         
+        # State for batch processing
+        image_files = []
+        is_processing = False
+        should_cancel = False
+        
+        def get_image_files(folder: str) -> list:
+            """Get all image files in a folder."""
+            files = []
+            folder_path = Path(folder)
+            if folder_path.exists():
+                for ext in SUPPORTED_FORMATS:
+                    files.extend(folder_path.glob(f"*{ext}"))
+                    files.extend(folder_path.glob(f"*{ext.upper()}"))
+            return sorted(set(files))
+        
+        def update_file_list():
+            """Update the file list based on input folder."""
+            nonlocal image_files
+            input_folder = batch_window["-BATCH-INPUT-"].get()
+            if input_folder:
+                image_files = get_image_files(input_folder)
+                file_names = [f.name for f in image_files]
+                batch_window["-BATCH-FILES-"].update(file_names)
+                batch_window["-BATCH-COUNT-"].update(f"{len(image_files)} files found")
+            else:
+                image_files = []
+                batch_window["-BATCH-FILES-"].update([])
+                batch_window["-BATCH-COUNT-"].update("0 files found")
+        
         while True:
-            event, values = batch_window.read()
+            event, values = batch_window.read(timeout=100)
             
-            if event in (sg.WIN_CLOSED, "-BATCH-CLOSE-", "-BATCH-CANCEL-"):
+            if event in (sg.WIN_CLOSED, "-BATCH-CLOSE-"):
+                if is_processing:
+                    should_cancel = True
                 break
             
-            # Handle batch events here
-            # TODO: Implement batch processing logic
+            elif event == "-BATCH-CANCEL-":
+                if is_processing:
+                    should_cancel = True
+                    batch_window["-BATCH-STATUS-"].update("Cancelling...")
+                else:
+                    break
+            
+            # When input folder changes, update file list
+            elif event == "-BATCH-INPUT-":
+                update_file_list()
+            
+            elif event == "-BATCH-START-":
+                if not image_files:
+                    sg.popup_error("No images found in input folder.", title="Error")
+                    continue
+                
+                output_folder = values["-BATCH-OUTPUT-"]
+                if not output_folder:
+                    # Default to input folder + "_output"
+                    input_folder = values["-BATCH-INPUT-"]
+                    output_folder = str(Path(input_folder) / "output")
+                    batch_window["-BATCH-OUTPUT-"].update(output_folder)
+                
+                # Create output folder
+                Path(output_folder).mkdir(parents=True, exist_ok=True)
+                
+                # Get settings
+                quality_map = {"Standard": "standard", "High": "high", "Ultra": "ultra"}
+                quality = quality_map.get(values["-BATCH-QUALITY-"], "high")
+                
+                bg_map = {"Transparent": None, "White": (255, 255, 255), "Black": (0, 0, 0)}
+                background = bg_map.get(values["-BATCH-BG-"])
+                
+                format_map = {"PNG": "png", "JPEG": "jpg", "WebP": "webp"}
+                output_format = format_map.get(values["-BATCH-FORMAT-"], "png")
+                
+                # Initialize engine if needed
+                if self.engine is None:
+                    batch_window["-BATCH-STATUS-"].update("Initializing engine...")
+                    batch_window["-BATCH-PROGRESS-"].update(visible=True, current_count=0)
+                    try:
+                        self.engine = MattingEngine(
+                            model_name="modnet",
+                            use_gpu=self.config.get("use_gpu", True),
+                            auto_download=True,
+                        )
+                    except Exception as e:
+                        sg.popup_error(f"Failed to initialize engine:\n\n{e}", title="Error")
+                        continue
+                
+                # Start batch processing
+                is_processing = True
+                should_cancel = False
+                batch_window["-BATCH-START-"].update(disabled=True)
+                batch_window["-BATCH-PROGRESS-"].update(visible=True, current_count=0)
+                
+                total = len(image_files)
+                processed = 0
+                errors = 0
+                
+                for i, image_path in enumerate(image_files):
+                    if should_cancel:
+                        break
+                    
+                    try:
+                        batch_window["-BATCH-STATUS-"].update(
+                            f"Processing {i+1}/{total}: {image_path.name}"
+                        )
+                        batch_window["-BATCH-PROGRESS-"].update(
+                            current_count=int((i / total) * 100)
+                        )
+                        batch_window.refresh()
+                        
+                        # Load and process image
+                        image = load_image(image_path)
+                        result = self.engine.process_with_background(
+                            image, quality=quality, background=background
+                        )
+                        
+                        # Save result
+                        output_name = image_path.stem + "_matte." + output_format
+                        output_path = Path(output_folder) / output_name
+                        save_image(result, output_path)
+                        
+                        processed += 1
+                        
+                    except Exception as e:
+                        print(f"Error processing {image_path}: {e}")
+                        errors += 1
+                
+                # Complete
+                is_processing = False
+                batch_window["-BATCH-START-"].update(disabled=False)
+                batch_window["-BATCH-PROGRESS-"].update(current_count=100, visible=False)
+                
+                if should_cancel:
+                    batch_window["-BATCH-STATUS-"].update(
+                        f"Cancelled. Processed {processed}/{total} images."
+                    )
+                else:
+                    status = f"Complete! Processed {processed}/{total} images."
+                    if errors > 0:
+                        status += f" ({errors} errors)"
+                    batch_window["-BATCH-STATUS-"].update(status)
+                    
+                    # Offer to open output folder
+                    if processed > 0:
+                        if sg.popup_yes_no(
+                            f"Batch processing complete!\n\n"
+                            f"Processed: {processed}\nErrors: {errors}\n\n"
+                            f"Open output folder?",
+                            title="Complete"
+                        ) == "Yes":
+                            import subprocess
+                            subprocess.Popen(f'explorer "{output_folder}"')
         
         batch_window.close()
     

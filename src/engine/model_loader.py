@@ -11,13 +11,15 @@ from ..utils.paths import get_cache_dir, get_models_dir
 
 
 # Model registry with URLs and metadata
+# Using Hugging Face for reliable CDN hosting
 MODEL_REGISTRY = {
     "modnet": {
         "name": "MODNet",
-        "description": "Trimap-free portrait matting model (fast, 7MB)",
+        "description": "Trimap-free portrait matting model (fast, 25MB)",
         "filename": "modnet.onnx",
-        "url": "https://github.com/ZHKKKe/MODNet/raw/master/onnx/modnet.onnx",
-        "size_mb": 7,
+        # Using Hugging Face hosted model (more reliable than GitHub raw)
+        "url": "https://huggingface.co/gradio/Modnet/resolve/main/modnet.onnx",
+        "size_mb": 25,
         "sha256": None,  # Will verify if provided
         "requires_trimap": False,
     },
@@ -25,7 +27,7 @@ MODEL_REGISTRY = {
         "name": "MODNet Photographic",
         "description": "MODNet optimized for photographic portraits",
         "filename": "modnet_photographic.onnx",
-        "url": "https://github.com/ZHKKKe/MODNet/raw/master/onnx/modnet_photographic_portrait_matting.onnx",
+        "url": "https://huggingface.co/DavG25/modnet-pretrained-models/resolve/main/modnet_photographic_portrait_matting.onnx",
         "size_mb": 25,
         "sha256": None,
         "requires_trimap": False,

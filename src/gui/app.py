@@ -57,12 +57,12 @@ class MattingApp:
         # Initialize theme
         get_theme()
     
-    def _init_engine(self, progress_callback=None) -> bool:
+    def _init_engine(self, progress_callback=None) -> Tuple[bool, Optional[str]]:
         """
         Initialize the matting engine.
         
         Returns:
-            True if successful, False otherwise.
+            Tuple of (success: bool, error_message: Optional[str])
         """
         try:
             self.engine = MattingEngine(
@@ -71,14 +71,13 @@ class MattingApp:
                 auto_download=True,
                 progress_callback=progress_callback,
             )
-            return True
+            return True, None
         except Exception as e:
-            sg.popup_error(
+            error_msg = (
                 f"Failed to initialize matting engine:\n\n{e}\n\n"
-                "Please check your internet connection for model download.",
-                title="Initialization Error"
+                "Please check your internet connection for model download."
             )
-            return False
+            return False, error_msg
     
     def create_main_window(self) -> sg.Window:
         """Create and return the main application window."""
@@ -212,8 +211,8 @@ class MattingApp:
             
             # Initialize in background
             def init_thread():
-                success = self._init_engine(progress_callback)
-                self.window.write_event_value("-ENGINE-READY-", success)
+                success, error_msg = self._init_engine(progress_callback)
+                self.window.write_event_value("-ENGINE-READY-", (success, error_msg))
             
             threading.Thread(target=init_thread, daemon=True).start()
             return
@@ -448,7 +447,7 @@ class MattingApp:
                 self.window["-STATUS-"].update(status)
             
             elif event == "-ENGINE-READY-":
-                success = values[event]
+                success, error_msg = values[event]
                 self.window["-PROGRESS-"].update(visible=False)
                 if success:
                     self.window["-STATUS-"].update("Engine ready")
@@ -456,6 +455,8 @@ class MattingApp:
                 else:
                     self.window["-STATUS-"].update("Engine initialization failed")
                     self.window["-PROCESS-"].update(disabled=False)
+                    if error_msg:
+                        sg.popup_error(error_msg, title="Initialization Error")
             
             elif event == "-PROCESS-DONE-":
                 self._handle_process_complete(values[event])

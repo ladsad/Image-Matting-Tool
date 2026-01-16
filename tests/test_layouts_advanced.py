@@ -7,20 +7,28 @@ defined and returns a valid layout structure.
 
 import sys
 from pathlib import Path
+import importlib.util
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+# Constants
+SEPARATOR_WIDTH = 70
 
-def test_create_advanced_layout_exists():
-    """Test that create_advanced_layout function can be imported."""
-    # Direct import to avoid app dependencies
-    import importlib.util
+
+def load_layouts_module():
+    """Helper function to load the layouts module without triggering app dependencies."""
     layouts_path = project_root / "src" / "gui" / "layouts.py"
     spec = importlib.util.spec_from_file_location("layouts", layouts_path)
     layouts = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(layouts)
+    return layouts
+
+
+def test_create_advanced_layout_exists():
+    """Test that create_advanced_layout function can be imported."""
+    layouts = load_layouts_module()
     
     assert hasattr(layouts, "create_advanced_layout"), "layouts module should have create_advanced_layout"
     assert callable(layouts.create_advanced_layout), "create_advanced_layout should be callable"
@@ -29,14 +37,9 @@ def test_create_advanced_layout_exists():
 
 def test_create_advanced_layout_signature():
     """Test that create_advanced_layout has correct signature."""
-    import importlib.util
     import inspect
     
-    layouts_path = project_root / "src" / "gui" / "layouts.py"
-    spec = importlib.util.spec_from_file_location("layouts", layouts_path)
-    layouts = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(layouts)
-    
+    layouts = load_layouts_module()
     sig = inspect.signature(layouts.create_advanced_layout)
     params = list(sig.parameters.keys())
     
@@ -47,12 +50,7 @@ def test_create_advanced_layout_signature():
 
 def test_create_advanced_layout_returns_list():
     """Test that create_advanced_layout returns a list (layout)."""
-    import importlib.util
-    
-    layouts_path = project_root / "src" / "gui" / "layouts.py"
-    spec = importlib.util.spec_from_file_location("layouts", layouts_path)
-    layouts = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(layouts)
+    layouts = load_layouts_module()
     
     test_state = {
         "gamma": 1.0,
@@ -72,12 +70,7 @@ def test_create_advanced_layout_returns_list():
 
 def test_create_advanced_layout_with_various_states():
     """Test that create_advanced_layout works with different state values."""
-    import importlib.util
-    
-    layouts_path = project_root / "src" / "gui" / "layouts.py"
-    spec = importlib.util.spec_from_file_location("layouts", layouts_path)
-    layouts = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(layouts)
+    layouts = load_layouts_module()
     
     test_cases = [
         # Default state
@@ -119,12 +112,7 @@ def test_create_advanced_layout_with_various_states():
 
 def test_create_advanced_layout_has_required_keys():
     """Test that the layout contains expected UI element keys."""
-    import importlib.util
-    
-    layouts_path = project_root / "src" / "gui" / "layouts.py"
-    spec = importlib.util.spec_from_file_location("layouts", layouts_path)
-    layouts = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(layouts)
+    layouts = load_layouts_module()
     
     test_state = {
         "gamma": 1.0,
@@ -159,9 +147,9 @@ def test_create_advanced_layout_has_required_keys():
 
 def main():
     """Run all tests."""
-    print("\n" + "=" * 70)
+    print("\n" + "=" * SEPARATOR_WIDTH)
     print("Testing create_advanced_layout function (commit 547e1fa)")
-    print("=" * 70 + "\n")
+    print("=" * SEPARATOR_WIDTH + "\n")
     
     tests = [
         ("Import Test", test_create_advanced_layout_exists),
@@ -186,9 +174,9 @@ def main():
             print(f"✗ ERROR: {e}")
             failed += 1
     
-    print("\n" + "=" * 70)
+    print("\n" + "=" * SEPARATOR_WIDTH)
     print(f"Results: {passed} passed, {failed} failed")
-    print("=" * 70 + "\n")
+    print("=" * SEPARATOR_WIDTH + "\n")
     
     return failed == 0
 

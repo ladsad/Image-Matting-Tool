@@ -55,12 +55,10 @@ class MattingApp:
         self.is_processing = False
         self.selected_model = "modnet"  # Default model
         
-        # Model name mapping from UI display to internal name
+        # Model name mapping        # Map display names to internal model names
         self._model_map = {
             "MODNet (Fast)": "modnet",
             "MODNet Photographic": "modnet_photographic",
-            "RVM MobileNet (Balanced)": "rvm_mobilenet",
-            "RVM ResNet50 (Quality)": "rvm",
         }
         
         # Initialize theme

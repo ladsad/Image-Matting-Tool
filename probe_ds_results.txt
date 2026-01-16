@@ -1,6 +1,0 @@
-Testing relative to 128x128: (1, 2, 4, 8)
-Failed: [ONNXRuntimeError] : 2 : INVALID_ARGUMENT : Non-zero status code returned while running Expand node. Name:'Expand_134' Status Message: invalid expand shape
-Testing relative to 128x128: (1, 1, 1, 1)
-Failed: [ONNXRuntimeError] : 2 : INVALID_ARGUMENT : Non-zero status code returned while running Expand node. Name:'Expand_134' Status Message: invalid expand shape
-Testing relative to 128x128: (2, 4, 8, 16)
-SUCCESS!

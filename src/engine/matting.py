@@ -78,9 +78,7 @@ class MattingEngine:
         self.input_shape: Optional[Tuple[int, ...]] = None
         self.model_info: Optional[dict] = None
         
-        # RVM recurrent states (for video matting model)
-        self._rvm_rec = None
-        self._rvm_downsample_ratio = 0.25
+        # RVM recurrent states removed
         
         if auto_download:
             self._initialize_model(progress_callback)
@@ -120,6 +118,18 @@ class MattingEngine:
             providers=providers
         )
         
+        # For MatteFormer, we need an auxiliary MODNet model for trimap generation
+        if self.model_name == "matteformer":
+            print("Initializing auxiliary MODNet for trimap generation...")
+            modnet_path = self.model_loader.ensure_model("modnet")
+            self.aux_session = ort.InferenceSession(
+                str(modnet_path),
+                sess_options=sess_options,
+                providers=providers
+            )
+        else:
+            self.aux_session = None
+        
         # Get input info
         input_info = self.session.get_inputs()[0]
         self.input_name = input_info.name
@@ -128,6 +138,196 @@ class MattingEngine:
         # Log which provider is being used
         active_provider = self.session.get_providers()[0]
         print(f"Matting engine initialized with {active_provider}")
+
+    def _generate_trimap(self, alpha: np.ndarray, convert_to_onehot: bool = True) -> np.ndarray:
+        """
+        Generate a trimap from coarse alpha.
+        0=BG, 128=Unknown, 255=FG
+        
+        Args:
+            alpha: Alpha matte (H, W) in range [0, 255] or [0, 1]
+            convert_to_onehot: If True, returns (3, H, W) float tensor
+        """
+        if alpha.max() <= 1.0:
+            alpha = (alpha * 255).astype(np.uint8)
+        else:
+            alpha = alpha.astype(np.uint8)
+            
+        # Erosion and Dilation to find unknown region
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        # Larger erosion/dilation for safer trimap?
+        # MatteFormer uses eroding/dilating alpha.
+        
+        # Thresholds
+        fg_thresh = 240
+        bg_thresh = 15
+        
+        # Initial Guess
+        trimap = np.zeros_like(alpha)
+        trimap[alpha >= fg_thresh] = 255 # FG
+        trimap[alpha <= bg_thresh] = 0   # BG
+        trimap[(alpha > bg_thresh) & (alpha < fg_thresh)] = 128 # Unknown
+        
+        # Dilate unknown region
+        # Identify unknown
+        unknown = (trimap == 128).astype(np.uint8)
+        # Dilate unknown to cover edges better
+        unknown = cv2.dilate(unknown, kernel, iterations=10)
+        
+        trimap[unknown == 1] = 128
+        
+        if not convert_to_onehot:
+            return trimap
+            
+        # Convert to One-Hot (3, H, W)
+        # Channel 0: BG (0), Channel 1: Unknown (128), Channel 2: FG (255)
+        # MatteFormer Check: 
+        # sample['trimap'] = F.one_hot(sample['trimap'], num_classes=3).permute(2, 0, 1).float()
+        # Original map: 0->0, 128->1, 255->2 for one_hot indices?
+        # inference.py logic:
+        # padded_trimap[padded_trimap < 85] = 0
+        # padded_trimap[padded_trimap >= 170] = 2
+        # padded_trimap[padded_trimap >= 85] = 1
+        
+        # My scale: 0, 128, 255.
+        # 0 -> 0 (BG)
+        # 128 -> 1 (Unknown)
+        # 255 -> 2 (FG)
+        
+        indices = np.zeros_like(trimap, dtype=np.int64)
+        indices[trimap == 128] = 1
+        indices[trimap == 255] = 2
+        
+        # One hot
+        h, w = trimap.shape
+        one_hot = np.zeros((3, h, w), dtype=np.float32)
+        
+        for k in range(3):
+            one_hot[k, :, :] = (indices == k).astype(np.float32)
+            
+        return one_hot
+
+    def _process_matteformer(self, image: np.ndarray, target_size: int) -> np.ndarray:
+        """Process image using MatteFormer with auto-generated trimap."""
+        h, w = image.shape[:2]
+        
+        # 1. Run MODNet (Aux) to get coarse alpha
+        # Preprocess for MODNet (RGB, normalized)
+        # Reuse existing preprocess logic but need to respect MODNet input size?
+        # MODNet usually takes loose size, but let's stick to standard preprocess
+        modnet_input, orig_mod, proc_mod = self._preprocess(image, target_size=512) # Use 512 for coarse
+        
+        # Run MODNet
+        mod_out = self.aux_session.run(None, {self.aux_session.get_inputs()[0].name: modnet_input})
+        mod_alpha = self._postprocess(mod_out[0], orig_mod) # Returns (H, W) uint8 0-255? No, preprocessing returns original logic
+        # My _postprocess logic:
+        # alpha = output[0, 0, :, :]
+        # alpha = cv2.resize(alpha, original_size)
+        # alpha = np.clip(alpha * 255, 0, 255).astype(np.uint8)
+        
+        # 2. Generate Trimap from Coarse Alpha
+        trimap_onehot = self._generate_trimap(mod_alpha, convert_to_onehot=True)
+        # Shape (3, H, W)
+        
+        # 3. Prepare MatteFormer Inputs
+        # MatteFormer uses Swin Transformer, input size must be divisible by 32
+        # Resize image and trimap to aligned size
+        
+        # Resize image to target_size (high quality)
+        scale = target_size / max(h, w)
+        new_h = int(h * scale)
+        new_w = int(w * scale)
+        # Align to 32
+        new_h = (new_h // 32) * 32
+        new_w = (new_w // 32) * 32
+        new_h = max(new_h, 32)
+        new_w = max(new_w, 32)
+        
+        # Resize inputs
+        img_resized = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        # Trimap resize (nearest neighbor for masks?) 
+        # But we act on One-hot floats. Linear is fine, then re-binarize?
+        # Actually, best to resize the coarse alpha FIRST, then gen trimap at target res.
+        
+        # Re-gen trimap at target res
+        mod_alpha_resized = cv2.resize(mod_alpha, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+        trimap_onehot_high = self._generate_trimap(mod_alpha_resized, convert_to_onehot=True)
+        
+        # Prep Image: (1, 3, H, W) Normalized
+        src = img_resized.astype(np.float32) / 255.0
+        src = (src - np.array([0.485, 0.456, 0.406])) / np.array([0.229, 0.224, 0.225]) # ImageNet Mean/Std
+        src = np.transpose(src, (2, 0, 1))
+        src = np.expand_dims(src, 0).astype(np.float32)
+        
+        # Prep Trimap: (1, 3, H, W)
+        tri = np.expand_dims(trimap_onehot_high, 0).astype(np.float32)
+        
+        # Run Inference
+        inputs = {
+            "image": src,
+            "trimap": tri
+        }
+        
+        outputs = self.session.run(None, inputs)
+        # Outputs: alpha_os1, alpha_os4, alpha_os8. We want os1 (Fine)
+        alpha_fine = outputs[0] # (1, 1, H, W)
+        
+        # Post-process
+        alpha_fine = alpha_fine[0, 0, :, :]
+        # Resize back to original
+        alpha_final = cv2.resize(alpha_fine, (w, h), interpolation=cv2.INTER_LINEAR)
+        alpha_final = np.clip(alpha_final * 255, 0, 255).astype(np.uint8)
+        
+        return alpha_final
+
+    def process_image(
+        self,
+        image: Union[str, Path, np.ndarray],
+        quality: str = "high",
+        return_timing: bool = False
+    ) -> Union[np.ndarray, Tuple[np.ndarray, float]]:
+        """
+        Process an image and return the alpha matte.
+        """
+        # Load image if path provided
+        if isinstance(image, (str, Path)):
+            image = cv2.imread(str(image))
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        
+        if image is None:
+            raise ValueError("Could not load image")
+            
+        original_h, original_w = image.shape[:2]
+        
+        # Handle quality settings
+        target_sizes = {
+            "standard": 512,
+            "high": 1024,
+            "ultra": 2048
+        }
+        target_size = target_sizes.get(quality, 1024)
+        
+        start_time = time.perf_counter()
+        
+        # Route to specific model logic
+        is_rvm = self.model_info.get("recurrent", False) if self.model_info else False
+        is_matteformer = self.model_name == "matteformer"
+        
+        if is_matteformer:
+            alpha = self._process_matteformer(image, target_size)
+        elif is_rvm:
+            alpha = self._process_rvm(image, target_size)
+        else:
+            # Standard MODNet processing
+            input_tensor, original_size, processed_size = self._preprocess(image, target_size)
+            outputs = self.session.run(None, {self.input_name: input_tensor})
+            alpha = self._postprocess(outputs[0], original_size)
+        
+        process_time = time.perf_counter() - start_time
+        
+        if return_timing:
+            return alpha, process_time
+        return alpha
     
     def get_available_providers(self) -> List[str]:
         """Get list of available ONNX execution providers."""
@@ -290,117 +490,7 @@ class MattingEngine:
             return alpha, inference_time
         return alpha
     
-    def _process_rvm(self, image: np.ndarray, target_size: int) -> np.ndarray:
-        """
-        Process image using RVM (Robust Video Matting) model.
-        
-        RVM expects: src (NCHW RGB normalized), r1i, r2i, r3i, r4i (recurrent states), downsample_ratio
-        Returns: fgr (foreground), pha (alpha), r1o, r2o, r3o, r4o (recurrent outputs)
-        """
-        original_h, original_w = image.shape[:2]
-        
-        # Resize to target while maintaining aspect ratio
-        scale = target_size / max(original_h, original_w)
-        new_h = int(original_h * scale)
-        new_w = int(original_w * scale)
-        # Ensure divisible by 32 for RVM so downsampling works cleanly
-        # base = new / 4. r4 = base / 8. Total div required: 32
-        new_h = (new_h // 32) * 32
-        new_w = (new_w // 32) * 32
-        new_h = max(new_h, 32)
-        new_w = max(new_w, 32)
-        
-        resized = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
-        
-        # Normalize to [0, 1] and convert to NCHW
-        src = resized.astype(np.float32) / 255.0
-        src = np.transpose(src, (2, 0, 1))
-        src = np.expand_dims(src, 0)
-        
-        # Get input names from model to understand expected format
-        input_names = [inp.name for inp in self.session.get_inputs()]
-        
-        # RVM model has inputs: src, r1i, r2i, r3i, r4i, downsample_ratio
-        # Initialize recurrent states based on actual required shapes
-        # For single image processing, use zero-initialized recurrent states
-        
-        # Build inputs dict by matching input names
-        inputs = {}
-        
-        for inp in self.session.get_inputs():
-            name = inp.name
-            
-            if name == "src":
-                inputs[name] = src
-            elif name == "downsample_ratio":
-                inputs[name] = np.array([self._rvm_downsample_ratio], dtype=np.float32)
-            elif name.startswith("r") and name.endswith("i"):
-                # Recurrent state input (r1i, r2i, r3i, r4i)
-                # Shape is typically [batch, channels, height, width]
-                # Channels vary between MobileNet and ResNet backbones
-                
-                # Default to MobileNet counts
-                channels_map = {"r1i": 16, "r2i": 20, "r3i": 40, "r4i": 64}
-                
-                # ResNet50 counts (verified from model inspection)
-                # Note: These differ from standard ResNet block widths
-                # "rvm" key corresponds to ResNet50 in model_loader
-                if self.model_name == "rvm" or "resnet" in self.model_name.lower():
-                     channels_map = {"r1i": 16, "r2i": 32, "r3i": 64, "r4i": 128}
-                
-                channels = channels_map.get(name, 16)
-                
-                # Height/width scale down based on level AND downsample ratio
-                # RVM processes internally at (src_h * downsample_ratio, src_w * downsample_ratio)
-                ds_ratio = self._rvm_downsample_ratio
-                base_h = int(new_h * ds_ratio)
-                base_w = int(new_w * ds_ratio)
-                
-                scale_map = {"r1i": 1, "r2i": 2, "r3i": 4, "r4i": 8}
-                scale_factor = scale_map.get(name, 1)
-                
-                rec_h = max(base_h // scale_factor, 1)
-                rec_w = max(base_w // scale_factor, 1)
-                
-                inputs[name] = np.zeros((1, channels, rec_h, rec_w), dtype=np.float32)
 
-        # Debug input shapes
-        print(f"DEBUG RVM Inputs: src={src.shape}, base={base_h}x{base_w}")
-        for k, v in inputs.items():
-            if k != "src":
-                print(f"  {k}: {v.shape}")
-        
-        # Run inference
-        outputs = self.session.run(None, inputs)
-        
-        # Get output names to find alpha (pha)
-        output_names = [out.name for out in self.session.get_outputs()]
-        
-        # Find alpha in outputs
-        alpha = None
-        for i, out_name in enumerate(output_names):
-            if out_name == "pha":
-                alpha = outputs[i][0, 0]  # (1, 1, H, W) -> (H, W)
-                break
-        
-        if alpha is None:
-            # Fallback: assume second output is alpha
-            if len(outputs) >= 2:
-                alpha = outputs[1][0, 0]
-            else:
-                alpha = outputs[0][0, 0]
-        
-        # Clip and convert
-        alpha = np.clip(alpha, 0, 1)
-        
-        # Resize back to original
-        alpha = cv2.resize(alpha, (original_w, original_h), interpolation=cv2.INTER_LINEAR)
-        
-        # Convert to 0-255
-        alpha = (alpha * 255).astype(np.uint8)
-        
-        return alpha
-    
     def process_with_background(
         self,
         image: Union[str, Path, np.ndarray],

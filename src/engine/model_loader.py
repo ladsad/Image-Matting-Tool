@@ -26,39 +26,14 @@ MODEL_REGISTRY = {
     },
     "modnet_photographic": {
         "name": "MODNet Photographic",
-        "description": "MODNet optimized for photographic portraits",
-        "filename": "modnet_photographic.onnx",
-        "url": "https://huggingface.co/DavG25/modnet-pretrained-models/resolve/main/modnet_photographic_portrait_matting.onnx",
+        "description": "MODNet finetuned for photographic portraits",
+        "filename": "modnet_photographic_portrait_matting.onnx",
+        "url": "https://github.com/ZHKKKe/MODNet/releases/download/v1.0.0/modnet_photographic_portrait_matting.onnx",
         "size_mb": 25,
         "sha256": None,
         "requires_trimap": False,
         "quality": "high",
         "input_format": "rgb",
-    },
-    # RVM - Robust Video Matting, works excellent on single images too
-    "rvm": {
-        "name": "RVM ResNet50 (Quality)",
-        "description": "Robust Video Matting - excellent quality, GPU recommended",
-        "filename": "rvm_resnet50_fp32.onnx",
-        "url": "https://github.com/PeterL1n/RobustVideoMatting/releases/download/v1.0.0/rvm_resnet50_fp32.onnx",
-        "size_mb": 140,
-        "sha256": None,
-        "requires_trimap": False,
-        "quality": "ultra",
-        "input_format": "rgb",
-        "recurrent": True,  # RVM uses recurrent states
-    },
-    "rvm_mobilenet": {
-        "name": "RVM MobileNet (Balanced)",
-        "description": "Robust Video Matting - good balance of speed and quality",
-        "filename": "rvm_mobilenetv3_fp32.onnx",
-        "url": "https://github.com/PeterL1n/RobustVideoMatting/releases/download/v1.0.0/rvm_mobilenetv3_fp32.onnx",
-        "size_mb": 15,
-        "sha256": None,
-        "requires_trimap": False,
-        "quality": "high",
-        "input_format": "rgb",
-        "recurrent": True,
     },
 }
 
@@ -123,7 +98,7 @@ class ModelLoader:
         Args:
             model_name: Name of the model to ensure availability.
             progress_callback: Optional callback(progress: float, status: str)
-                              where progress is 0.0 to 1.0.
+                               where progress is 0.0 to 1.0.
         
         Returns:
             Path to the model file.
@@ -141,7 +116,12 @@ class ModelLoader:
         
         # Download the model
         model_info = MODEL_REGISTRY[model_name]
-        url = model_info["url"]
+        url = model_info.get("url")
+        
+        if not url:
+             if progress_callback:
+                 progress_callback(0.0, f"Model {model_name} not found and no URL provided. Please install manually.")
+             raise RuntimeError(f"Model {model_name} has no download URL and is not present locally.")
         
         if progress_callback:
             progress_callback(0.0, f"Downloading {model_info['name']}...")

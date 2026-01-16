@@ -122,14 +122,7 @@ class MattingApp:
         
         return window
     
-    def _get_quality_key(self, display_value: str) -> str:
-        """Convert display quality name to config key."""
-        mapping = {
-            "Standard (Fast)": "standard",
-            "High (Balanced)": "high",
-            "Ultra (Best)": "ultra",
-        }
-        return mapping.get(display_value, "high")
+
     
     def _get_background_color(self, bg_option: str, custom_color: str) -> Optional[Tuple[int, int, int]]:
         """Get background color tuple from option."""
@@ -271,7 +264,14 @@ class MattingApp:
         self.window["-STATUS-"].update("Processing...")
         
         # Get settings
-        quality = self._get_quality_key(self.window["-QUALITY-"].get())
+        # Determine quality based on model
+        quality_map = {
+            "modnet": "standard",
+            "modnet_photographic": "high",
+            "vitmatte": "ultra",
+        }
+        quality = quality_map.get(self.selected_model, "high")
+        
         bg_option = self.window["-BACKGROUND-"].get()
         custom_color = self.window["-CUSTOM-COLOR-"].get()
         background = self._get_background_color(bg_option, custom_color)
@@ -577,7 +577,6 @@ class MattingApp:
             elif event == "-SETTINGS-SAVE-":
                 # Save settings
                 self.config.update({
-                    "quality": values["-SETTINGS-QUALITY-"].lower(),
                     "background": values["-SETTINGS-BG-"].lower(),
                     "output_format": values["-SETTINGS-FORMAT-"].lower(),
                     "jpeg_quality": int(values["-SETTINGS-JPEG-QUALITY-"]),

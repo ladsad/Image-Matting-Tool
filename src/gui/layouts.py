@@ -111,16 +111,7 @@ def create_main_layout() -> list:
         )],
     ])
     
-    settings_col2 = sg.Column([
-        [sg.Text("Quality:", size=(10, 1))],
-        [sg.Combo(
-            ["Standard (Fast)", "High (Balanced)", "Ultra (Best)"],
-            default_value="High (Balanced)",
-            key="-QUALITY-",
-            size=(18, 1),
-            readonly=True,
-        )],
-    ])
+
     
     settings_col3 = sg.Column([
         [sg.Text("Background:", size=(12, 1))],
@@ -148,7 +139,7 @@ def create_main_layout() -> list:
     
     settings_frame = sg.Frame(
         "Settings",
-        [[settings_col1, settings_col2, settings_col3, settings_col4]],
+        [[settings_col1, settings_col3, settings_col4]],
         relief=sg.RELIEF_GROOVE,
         pad=(0, 10),
     )
@@ -287,10 +278,6 @@ def create_settings_layout(current_settings: dict) -> list:
         
         # Default settings
         [sg.Frame("Defaults", [
-            [sg.Text("Default Quality:", size=(15, 1)),
-             sg.Combo(["Standard", "High", "Ultra"],
-                     default_value=current_settings.get("quality", "high").title(),
-                     key="-SETTINGS-QUALITY-", size=(15, 1), readonly=True)],
             [sg.Text("Default Background:", size=(15, 1)),
              sg.Combo(["Transparent", "White", "Black"],
                      default_value=current_settings.get("background", "transparent").title(),

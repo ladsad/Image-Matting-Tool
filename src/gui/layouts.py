@@ -56,11 +56,15 @@ def create_main_layout() -> list:
         "",
         [
             [
-                # Input preview
+                # Input preview with drag-and-drop support
                 sg.Column([
                     [sg.Text("Original", font=FONTS["heading"])],
                     [sg.Image(key="-INPUT-PREVIEW-", size=(400, 400), 
-                             background_color="#2a2a4a", pad=(5, 5))],
+                             background_color="#2a2a4a", pad=(5, 5),
+                             enable_events=True)],
+                    [sg.Text("Drag & drop image here or click 'Select Image'", 
+                            font=FONTS["small"], text_color=COLORS["text_muted"],
+                            key="-DROP-HINT-")],
                 ], element_justification="center"),
                 
                 # Arrow indicator
@@ -73,6 +77,7 @@ def create_main_layout() -> list:
                     [sg.Text("Result", font=FONTS["heading"])],
                     [sg.Image(key="-OUTPUT-PREVIEW-", size=(400, 400),
                              background_color="#2a2a4a", pad=(5, 5))],
+                    [sg.Text("", font=FONTS["small"], key="-OUTPUT-HINT-")],
                 ], element_justification="center"),
             ],
         ],

@@ -90,7 +90,22 @@ class MattingApp:
             resizable=False,
             element_justification="center",
             margins=(20, 20),
+            enable_close_attempted_event=True,
         )
+        
+        # Bind keyboard shortcuts
+        window.bind("<Control-o>", "-KEY-CTRL-O-")  # Open file
+        window.bind("<Control-O>", "-KEY-CTRL-O-")
+        window.bind("<Control-s>", "-KEY-CTRL-S-")  # Save file
+        window.bind("<Control-S>", "-KEY-CTRL-S-")
+        window.bind("<Control-p>", "-KEY-CTRL-P-")  # Process
+        window.bind("<Control-P>", "-KEY-CTRL-P-")
+        window.bind("<Control-b>", "-KEY-CTRL-B-")  # Batch mode
+        window.bind("<Control-B>", "-KEY-CTRL-B-")
+        window.bind("<F5>", "-KEY-F5-")  # Process (alternative)
+        
+        # Enable drag-and-drop for the window
+        window.TKroot.drop_target_register("DND_Files") if hasattr(window.TKroot, 'drop_target_register') else None
         
         # Restore window position if saved
         pos = self.config.get("window_position")
@@ -139,26 +154,22 @@ class MattingApp:
         
         self.window[key].update(data=png_bytes)
     
-    def _handle_file_select(self) -> None:
-        """Handle image file selection."""
-        # Get supported formats for file dialog
-        formats = " ".join(f"*{ext}" for ext in SUPPORTED_FORMATS)
+    def _load_image_file(self, filepath: str) -> bool:
+        """
+        Load an image file and update the UI.
         
-        filepath = sg.popup_get_file(
-            "Select Image",
-            file_types=[("Image Files", formats), ("All Files", "*.*")],
-            initial_folder=self.config.get("last_input_folder", ""),
-        )
+        Args:
+            filepath: Path to the image file.
         
-        if not filepath:
-            return
-        
+        Returns:
+            True if successful, False otherwise.
+        """
         path = Path(filepath)
         
         # Validate file
         if not path.exists():
             sg.popup_error("File not found.", title="Error")
-            return
+            return False
         
         if path.suffix.lower() not in SUPPORTED_FORMATS:
             sg.popup_error(
@@ -166,7 +177,7 @@ class MattingApp:
                 f"Supported formats: {', '.join(SUPPORTED_FORMATS)}",
                 title="Error"
             )
-            return
+            return False
         
         try:
             # Load and display image
@@ -187,6 +198,10 @@ class MattingApp:
             )
             self.window["-TIMING-INFO-"].update("")
             
+            # Update drop hint
+            if "-DROP-HINT-" in self.window.AllKeysDict:
+                self.window["-DROP-HINT-"].update("Image loaded - select another to replace")
+            
             # Enable process button
             self.window["-PROCESS-"].update(disabled=False)
             self.window["-SAVE-"].update(disabled=True)
@@ -194,8 +209,25 @@ class MattingApp:
             # Save folder preference
             self.config.set("last_input_folder", str(path.parent))
             
+            return True
+            
         except Exception as e:
             sg.popup_error(f"Failed to load image:\n\n{e}", title="Error")
+            return False
+    
+    def _handle_file_select(self) -> None:
+        """Handle image file selection via dialog."""
+        # Get supported formats for file dialog
+        formats = " ".join(f"*{ext}" for ext in SUPPORTED_FORMATS)
+        
+        filepath = sg.popup_get_file(
+            "Select Image",
+            file_types=[("Image Files", formats), ("All Files", "*.*")],
+            initial_folder=self.config.get("last_input_folder", ""),
+        )
+        
+        if filepath:
+            self._load_image_file(filepath)
     
     def _handle_process(self) -> None:
         """Handle background removal processing."""
@@ -468,6 +500,25 @@ class MattingApp:
                 self.window["-PROCESS-"].update(disabled=False)
                 self.is_processing = False
                 sg.popup_error(f"Processing failed:\n\n{error_msg}", title="Error")
+            
+            # Keyboard shortcuts
+            elif event == "-KEY-CTRL-O-":
+                self._handle_file_select()
+            
+            elif event == "-KEY-CTRL-S-":
+                if self.current_result is not None:
+                    self._handle_save()
+            
+            elif event in ("-KEY-CTRL-P-", "-KEY-F5-"):
+                if self.current_image is not None and not self.is_processing:
+                    self._handle_process()
+            
+            elif event == "-KEY-CTRL-B-":
+                self._show_batch_window()
+            
+            # Window close with confirmation
+            elif event == sg.WINDOW_CLOSE_ATTEMPTED_EVENT:
+                break
         
         # Save window position
         if self.window:

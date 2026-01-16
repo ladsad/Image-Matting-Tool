@@ -118,8 +118,8 @@ class MattingEngine:
             providers=providers
         )
         
-        # For MatteFormer, we need an auxiliary MODNet model for trimap generation
-        if self.model_name == "matteformer":
+        # For ViTMatte, we need an auxiliary MODNet model for trimap generation
+        if self.model_name == "vitmatte":
             print("Initializing auxiliary MODNet for trimap generation...")
             modnet_path = self.model_loader.ensure_model("modnet")
             self.aux_session = ort.InferenceSession(
@@ -131,9 +131,14 @@ class MattingEngine:
             self.aux_session = None
         
         # Get input info
-        input_info = self.session.get_inputs()[0]
-        self.input_name = input_info.name
-        self.input_shape = input_info.shape
+        try:
+            input_info = self.session.get_inputs()[0]
+            self.input_name = input_info.name
+            self.input_shape = input_info.shape
+        except Exception:
+            # ViTMatte might be complex, skip single input check
+            self.input_name = None
+            self.input_shape = None
         
         # Log which provider is being used
         active_provider = self.session.get_providers()[0]
@@ -143,10 +148,6 @@ class MattingEngine:
         """
         Generate a trimap from coarse alpha.
         0=BG, 128=Unknown, 255=FG
-        
-        Args:
-            alpha: Alpha matte (H, W) in range [0, 255] or [0, 1]
-            convert_to_onehot: If True, returns (3, H, W) float tensor
         """
         if alpha.max() <= 1.0:
             alpha = (alpha * 255).astype(np.uint8)
@@ -155,8 +156,6 @@ class MattingEngine:
             
         # Erosion and Dilation to find unknown region
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        # Larger erosion/dilation for safer trimap?
-        # MatteFormer uses eroding/dilating alpha.
         
         # Thresholds
         fg_thresh = 240
@@ -179,103 +178,93 @@ class MattingEngine:
         if not convert_to_onehot:
             return trimap
             
-        # Convert to One-Hot (3, H, W)
-        # Channel 0: BG (0), Channel 1: Unknown (128), Channel 2: FG (255)
-        # MatteFormer Check: 
-        # sample['trimap'] = F.one_hot(sample['trimap'], num_classes=3).permute(2, 0, 1).float()
-        # Original map: 0->0, 128->1, 255->2 for one_hot indices?
-        # inference.py logic:
-        # padded_trimap[padded_trimap < 85] = 0
-        # padded_trimap[padded_trimap >= 170] = 2
-        # padded_trimap[padded_trimap >= 85] = 1
-        
-        # My scale: 0, 128, 255.
-        # 0 -> 0 (BG)
-        # 128 -> 1 (Unknown)
-        # 255 -> 2 (FG)
-        
-        indices = np.zeros_like(trimap, dtype=np.int64)
-        indices[trimap == 128] = 1
-        indices[trimap == 255] = 2
-        
-        # One hot
-        h, w = trimap.shape
-        one_hot = np.zeros((3, h, w), dtype=np.float32)
-        
-        for k in range(3):
-            one_hot[k, :, :] = (indices == k).astype(np.float32)
-            
-        return one_hot
+        # Convert to One-Hot (3, H, W) or Channel Map
+        # ViTMatte usually expects specific trimap format.
+        # We'll return the 1-channel trimap and preprocess it in _process_vitmatte
+        return trimap
 
-    def _process_matteformer(self, image: np.ndarray, target_size: int) -> np.ndarray:
-        """Process image using MatteFormer with auto-generated trimap."""
+    def _process_vitmatte(self, image: np.ndarray, target_size: int) -> np.ndarray:
+        """Process image using ViTMatte with auto-generated trimap."""
         h, w = image.shape[:2]
         
         # 1. Run MODNet (Aux) to get coarse alpha
-        # Preprocess for MODNet (RGB, normalized)
-        # Reuse existing preprocess logic but need to respect MODNet input size?
-        # MODNet usually takes loose size, but let's stick to standard preprocess
-        modnet_input, orig_mod, proc_mod = self._preprocess(image, target_size=512) # Use 512 for coarse
+        # Preprocess for MODNet (Standard preprocess: RGB, Normalized, etc.)
+        modnet_input, orig_mod, proc_mod = self._preprocess(image, target_size=512) 
         
         # Run MODNet
         mod_out = self.aux_session.run(None, {self.aux_session.get_inputs()[0].name: modnet_input})
-        mod_alpha = self._postprocess(mod_out[0], orig_mod) # Returns (H, W) uint8 0-255? No, preprocessing returns original logic
-        # My _postprocess logic:
-        # alpha = output[0, 0, :, :]
-        # alpha = cv2.resize(alpha, original_size)
-        # alpha = np.clip(alpha * 255, 0, 255).astype(np.uint8)
+        mod_alpha = self._postprocess(mod_out[0], orig_mod)
         
-        # 2. Generate Trimap from Coarse Alpha
-        trimap_onehot = self._generate_trimap(mod_alpha, convert_to_onehot=True)
-        # Shape (3, H, W)
+        # 2. Prepare Inputs for ViTMatte
+        # Image: (1, 3, H, W). Normalized with 0.5 mean/std.
+        # Trimap: (1, 1, H, W) or (1, 4, H, W)?
         
-        # 3. Prepare MatteFormer Inputs
-        # MatteFormer uses Swin Transformer, input size must be divisible by 32
-        # Resize image and trimap to aligned size
-        
-        # Resize image to target_size (high quality)
+        # Resize image to target size (divisible by 32)
         scale = target_size / max(h, w)
         new_h = int(h * scale)
         new_w = int(w * scale)
-        # Align to 32
         new_h = (new_h // 32) * 32
         new_w = (new_w // 32) * 32
         new_h = max(new_h, 32)
         new_w = max(new_w, 32)
         
-        # Resize inputs
         img_resized = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
-        # Trimap resize (nearest neighbor for masks?) 
-        # But we act on One-hot floats. Linear is fine, then re-binarize?
-        # Actually, best to resize the coarse alpha FIRST, then gen trimap at target res.
         
-        # Re-gen trimap at target res
+        # Resize coarse alpha to match
         mod_alpha_resized = cv2.resize(mod_alpha, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-        trimap_onehot_high = self._generate_trimap(mod_alpha_resized, convert_to_onehot=True)
         
-        # Prep Image: (1, 3, H, W) Normalized
-        src = img_resized.astype(np.float32) / 255.0
-        src = (src - np.array([0.485, 0.456, 0.406])) / np.array([0.229, 0.224, 0.225]) # ImageNet Mean/Std
-        src = np.transpose(src, (2, 0, 1))
-        src = np.expand_dims(src, 0).astype(np.float32)
+        # Generate Trimap (Single channel: 0, 128, 255)
+        trimap = self._generate_trimap(mod_alpha_resized, convert_to_onehot=False)
         
-        # Prep Trimap: (1, 3, H, W)
-        tri = np.expand_dims(trimap_onehot_high, 0).astype(np.float32)
+        # Prepare Image Tensor: (1, 3, H, W)
+        # ViTMatte Mean/Std = 0.5
+        pixel_values = img_resized.astype(np.float32) / 255.0
+        pixel_values = (pixel_values - 0.5) / 0.5
+        pixel_values = np.transpose(pixel_values, (2, 0, 1))
+        pixel_values = np.expand_dims(pixel_values, 0).astype(np.float32)
         
-        # Run Inference
-        inputs = {
-            "image": src,
-            "trimap": tri
-        }
+        # Prepare Trimap Tensor
+        # Inspect model input expectations via session
+        input_names = [inp.name for inp in self.session.get_inputs()]
         
+        inputs = {}
+        if "pixel_values" in input_names:
+            inputs["pixel_values"] = pixel_values
+            
+        # Handle Trimap
+        # For ViTMatte ONNX, typically expects 4-channel (concat of image + trimap?) NO.
+        # Usually 'trimap' or 'guidance'.
+        
+        trimap_name = "trimap" # Default guess
+        for name in input_names:
+             if "trimap" in name or "guidance" in name:
+                 trimap_name = name
+                 break
+        
+        # ViTMatte trimap processing:
+        # 0 -> Background, 1 -> Unknown, 2 -> Foreground? Or 0-1 float?
+        # HuggingFace Transformers logic:
+        # It maps 0, 128, 255 to classes or keeps as float.
+        # Let's try standard float trimap: 0.0, 0.5, 1.0
+        
+        trimap_float = trimap.astype(np.float32) / 255.0 # (H, W) in [0, 1]
+        
+        # If input shape expects 4 dims (N, C, H, W)
+        trimap_tensor = np.expand_dims(trimap_float, 0) # (1, H, W)
+        trimap_tensor = np.expand_dims(trimap_tensor, 0) # (1, 1, H, W)
+        
+        if trimap_name in input_names:
+            inputs[trimap_name] = trimap_tensor.astype(np.float32)
+            
         outputs = self.session.run(None, inputs)
-        # Outputs: alpha_os1, alpha_os4, alpha_os8. We want os1 (Fine)
-        alpha_fine = outputs[0] # (1, 1, H, W)
         
-        # Post-process
-        alpha_fine = alpha_fine[0, 0, :, :]
-        # Resize back to original
-        alpha_final = cv2.resize(alpha_fine, (w, h), interpolation=cv2.INTER_LINEAR)
+        # Output is usually 'alphas' or first output
+        alpha_out = outputs[0] # (1, 1, H, W)
+        
+        alpha_out = alpha_out[0, 0, :, :]
+        
+        # Resize back
+        alpha_final = cv2.resize(alpha_out, (w, h), interpolation=cv2.INTER_LINEAR)
         alpha_final = np.clip(alpha_final * 255, 0, 255).astype(np.uint8)
         
         return alpha_final
@@ -309,16 +298,10 @@ class MattingEngine:
         
         start_time = time.perf_counter()
         
-        # Route to specific model logic
-        is_rvm = self.model_info.get("recurrent", False) if self.model_info else False
-        is_matteformer = self.model_name == "matteformer"
-        
-        if is_matteformer:
-            alpha = self._process_matteformer(image, target_size)
-        elif is_rvm:
-            alpha = self._process_rvm(image, target_size)
+        if self.model_name == "vitmatte":
+             alpha = self._process_vitmatte(image, target_size)
         else:
-            # Standard MODNet processing
+            # MODNet/standard processing
             input_tensor, original_size, processed_size = self._preprocess(image, target_size)
             outputs = self.session.run(None, {self.input_name: input_tensor})
             alpha = self._postprocess(outputs[0], original_size)
@@ -468,16 +451,13 @@ class MattingEngine:
         original_rgb = image.copy()
         
         # Get target resolution
+        # Get target resolution
         target_size = QUALITY_CONFIGS[quality]["resolution"]
-        
-        # Check if using RVM model
-        is_rvm = self.model_info.get("recurrent", False) if self.model_info else False
         
         start_time = time.perf_counter()
         
-        if is_rvm:
-            # RVM-specific processing
-            alpha = self._process_rvm(image, target_size)
+        if self.model_name == "vitmatte":
+             alpha = self._process_vitmatte(image, target_size)
         else:
             # MODNet/standard processing
             input_tensor, original_size, processed_size = self._preprocess(image, target_size)

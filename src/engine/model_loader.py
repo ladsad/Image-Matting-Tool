@@ -35,8 +35,18 @@ MODEL_REGISTRY = {
         "quality": "high",
         "input_format": "rgb",
     },
+    "vitmatte": {
+        "name": "ViTMatte (Ultra)",
+        "description": "SOTA Quality (ViTMatte) - Slow but precise",
+        "filename": "vitmatte_base_composition_1k.onnx",
+        "url": "https://huggingface.co/Xenova/vitmatte-base-composition-1k/resolve/main/onnx/model.onnx",
+        "size_mb": 387,
+        "sha256": None,
+        "requires_trimap": True, # Handled internally by auto-trimap
+        "quality": "ultra",
+        "input_format": "rgb",
+    },
 }
-
 
 class ModelLoader:
     """

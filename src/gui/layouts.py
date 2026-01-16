@@ -102,7 +102,7 @@ def create_main_layout() -> list:
     settings_col1 = sg.Column([
         [sg.Text("Model:", size=(10, 1))],
         [sg.Combo(
-            ["MODNet (Fast)", "MODNet Photographic"],
+            ["MODNet (Fast)", "MODNet Photographic", "ViTMatte (Ultra)"],
             default_value="MODNet (Fast)",
             key="-MODEL-",
             size=(25, 1),

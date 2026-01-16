@@ -59,6 +59,7 @@ class MattingApp:
         self._model_map = {
             "MODNet (Fast)": "modnet",
             "MODNet Photographic": "modnet_photographic",
+            "ViTMatte (Ultra)": "vitmatte",
         }
         
         # Initialize theme

@@ -303,11 +303,12 @@ class MattingEngine:
         scale = target_size / max(original_h, original_w)
         new_h = int(original_h * scale)
         new_w = int(original_w * scale)
-        # Ensure divisible by 16 for RVM
-        new_h = (new_h // 16) * 16
-        new_w = (new_w // 16) * 16
-        new_h = max(new_h, 16)
-        new_w = max(new_w, 16)
+        # Ensure divisible by 32 for RVM so downsampling works cleanly
+        # base = new / 4. r4 = base / 8. Total div required: 32
+        new_h = (new_h // 32) * 32
+        new_w = (new_w // 32) * 32
+        new_h = max(new_h, 32)
+        new_w = max(new_w, 32)
         
         resized = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
         
@@ -361,6 +362,12 @@ class MattingEngine:
                 rec_w = max(base_w // scale_factor, 1)
                 
                 inputs[name] = np.zeros((1, channels, rec_h, rec_w), dtype=np.float32)
+
+        # Debug input shapes
+        print(f"DEBUG RVM Inputs: src={src.shape}, base={base_h}x{base_w}")
+        for k, v in inputs.items():
+            if k != "src":
+                print(f"  {k}: {v.shape}")
         
         # Run inference
         outputs = self.session.run(None, inputs)

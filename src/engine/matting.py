@@ -294,8 +294,8 @@ class MattingEngine:
         """
         Process image using RVM (Robust Video Matting) model.
         
-        RVM expects: src (NCHW RGB normalized), rec (4 recurrent states), downsample_ratio
-        Returns: fgr (foreground), pha (alpha), rec outputs
+        RVM expects: src (NCHW RGB normalized), r1i, r2i, r3i, r4i (recurrent states), downsample_ratio
+        Returns: fgr (foreground), pha (alpha), r1o, r2o, r3o, r4o (recurrent outputs)
         """
         original_h, original_w = image.shape[:2]
         
@@ -316,47 +316,60 @@ class MattingEngine:
         src = np.transpose(src, (2, 0, 1))
         src = np.expand_dims(src, 0)
         
-        # Initialize recurrent states if needed
-        if self._rvm_rec is None or self._rvm_rec[0].shape[2:] != (new_h, new_w):
-            # Create zero-initialized recurrent states
-            self._rvm_rec = [
-                np.zeros((1, 1, new_h, new_w), dtype=np.float32),
-                np.zeros((1, 1, new_h // 2, new_w // 2), dtype=np.float32),
-                np.zeros((1, 1, new_h // 4, new_w // 4), dtype=np.float32),
-                np.zeros((1, 1, new_h // 8, new_w // 8), dtype=np.float32),
-            ]
-        
-        # Get input names from model
+        # Get input names from model to understand expected format
         input_names = [inp.name for inp in self.session.get_inputs()]
         
-        # Prepare inputs
-        inputs = {input_names[0]: src}
+        # RVM model has inputs: src, r1i, r2i, r3i, r4i, downsample_ratio
+        # Initialize recurrent states based on actual required shapes
+        # For single image processing, use zero-initialized recurrent states
         
-        # Add downsample ratio if model expects it
-        if len(input_names) > 1 and "downsample" in input_names[1].lower():
-            inputs[input_names[1]] = np.array([self._rvm_downsample_ratio], dtype=np.float32)
+        # Build inputs dict by matching input names
+        inputs = {}
+        
+        for inp in self.session.get_inputs():
+            name = inp.name
+            shape = inp.shape
             
-            # Add recurrent states
-            for i, rec_name in enumerate(input_names[2:6]):
-                if i < len(self._rvm_rec):
-                    inputs[rec_name] = self._rvm_rec[i]
+            if name == "src":
+                inputs[name] = src
+            elif name == "downsample_ratio":
+                inputs[name] = np.array([self._rvm_downsample_ratio], dtype=np.float32)
+            elif name.startswith("r") and name.endswith("i"):
+                # Recurrent state input (r1i, r2i, r3i, r4i)
+                # Shape is typically [batch, channels, height, width] with dynamic dims
+                # Use zeros for single image (no prior frame)
+                # Channels vary: 16 for r1, 20 for r2, 40 for r3, 64 for r4
+                channels_map = {"r1i": 16, "r2i": 20, "r3i": 40, "r4i": 64}
+                channels = channels_map.get(name, 16)
+                
+                # Height/width scale down based on level
+                scale_map = {"r1i": 1, "r2i": 2, "r3i": 4, "r4i": 8}
+                scale_factor = scale_map.get(name, 1)
+                
+                rec_h = new_h // scale_factor
+                rec_w = new_w // scale_factor
+                
+                inputs[name] = np.zeros((1, channels, rec_h, rec_w), dtype=np.float32)
         
         # Run inference
-        try:
-            outputs = self.session.run(None, inputs)
-        except Exception as e:
-            # Fallback: try with just src input
-            outputs = self.session.run(None, {input_names[0]: src})
+        outputs = self.session.run(None, inputs)
         
-        # Get alpha from outputs (typically second output: fgr, pha, ...)
-        if len(outputs) >= 2:
-            alpha = outputs[1][0, 0]  # (1, 1, H, W) -> (H, W)
-        else:
-            alpha = outputs[0][0, 0]
+        # Get output names to find alpha (pha)
+        output_names = [out.name for out in self.session.get_outputs()]
         
-        # Update recurrent states for video processing
-        if len(outputs) >= 6:
-            self._rvm_rec = outputs[2:6]
+        # Find alpha in outputs
+        alpha = None
+        for i, out_name in enumerate(output_names):
+            if out_name == "pha":
+                alpha = outputs[i][0, 0]  # (1, 1, H, W) -> (H, W)
+                break
+        
+        if alpha is None:
+            # Fallback: assume second output is alpha
+            if len(outputs) >= 2:
+                alpha = outputs[1][0, 0]
+            else:
+                alpha = outputs[0][0, 0]
         
         # Clip and convert
         alpha = np.clip(alpha, 0, 1)

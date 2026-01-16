@@ -328,7 +328,6 @@ class MattingEngine:
         
         for inp in self.session.get_inputs():
             name = inp.name
-            shape = inp.shape
             
             if name == "src":
                 inputs[name] = src
@@ -336,10 +335,16 @@ class MattingEngine:
                 inputs[name] = np.array([self._rvm_downsample_ratio], dtype=np.float32)
             elif name.startswith("r") and name.endswith("i"):
                 # Recurrent state input (r1i, r2i, r3i, r4i)
-                # Shape is typically [batch, channels, height, width] with dynamic dims
-                # Use zeros for single image (no prior frame)
-                # Channels vary: 16 for r1, 20 for r2, 40 for r3, 64 for r4
+                # Shape is typically [batch, channels, height, width]
+                # Channels vary between MobileNet and ResNet backbones
+                
+                # Default to MobileNet counts
                 channels_map = {"r1i": 16, "r2i": 20, "r3i": 40, "r4i": 64}
+                
+                # ResNet50 counts (check if model is resnet based on name or known mapping)
+                if "resnet" in self.model_name.lower() or "rvm_resnet" in self.model_name.lower():
+                     channels_map = {"r1i": 256, "r2i": 512, "r3i": 1024, "r4i": 2048}
+                
                 channels = channels_map.get(name, 16)
                 
                 # Height/width scale down based on level

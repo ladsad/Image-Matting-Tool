@@ -77,6 +77,16 @@ def create_main_layout() -> list:
                     [sg.Text("Result", font=FONTS["heading"])],
                     [sg.Image(key="-OUTPUT-PREVIEW-", size=(400, 400),
                              background_color="#2a2a4a", pad=(5, 5))],
+                    
+                    # Comparison controls
+                    [sg.Slider(range=(0, 100), default_value=100, orientation='h', 
+                              size=(24, 15), key='-COMPARE-SLIDER-', 
+                              enable_events=True, disable_number_display=True,
+                              tooltip="Blend: Left=Original, Right=Result")],
+                    [sg.Checkbox("Show Alpha Matte", key='-SHOW-ALPHA-', 
+                                enable_events=True, font=FONTS["small"], 
+                                text_color=COLORS["text_muted"])],
+                                
                     [sg.Text("", font=FONTS["small"], key="-OUTPUT-HINT-")],
                 ], element_justification="center"),
             ],

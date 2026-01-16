@@ -6,6 +6,7 @@ import traceback
 from pathlib import Path
 from typing import Optional, Tuple
 
+import cv2
 import numpy as np
 import FreeSimpleGUI as sg
 from PIL import Image
@@ -52,10 +53,16 @@ class MattingApp:
         self.current_alpha: Optional[np.ndarray] = None
         self.current_result: Optional[np.ndarray] = None
         self.current_path: Optional[Path] = None
+        
+        # Display state
+        self.comparison_ratio = 1.0  # 0.0=Original, 1.0=Result
+        self.show_alpha = False
+        
         self.is_processing = False
         self.selected_model = "modnet"  # Default model
         
-        # Model name mapping        # Map display names to internal model names
+        # Model name mapping
+        # Map display names to internal model names
         self._model_map = {
             "MODNet (Fast)": "modnet",
             "MODNet Photographic": "modnet_photographic",
@@ -147,8 +154,33 @@ class MattingApp:
             self.window[key].update(data=None)
             return
         
+        # Handle Output Preview blending/alpha
+        display_image = image
+        if key == "-OUTPUT-PREVIEW-":
+            if self.show_alpha and self.current_alpha is not None:
+                # Show Alpha Matte
+                # Convert single channel to 3 channel BGR for consistency
+                display_image = cv2.cvtColor(self.current_alpha, cv2.COLOR_GRAY2BGR)
+                
+            elif self.comparison_ratio < 1.0 and self.current_image is not None and self.current_result is not None:
+                # Blend Original and Result
+                # Ensure same size (result might be cropped/resized if bug, but usually same)
+                if self.current_image.shape == self.current_result.shape:
+                   alpha = self.comparison_ratio
+                   beta = 1.0 - alpha
+                   # current_image is original, current_result is matte on BG
+                   # Slider 0 = Original, 100 = Result
+                   # addWeighted: dst = src1*alpha + src2*beta + gamma
+                   # We want 0.0 -> Original (beta=1), 1.0 -> Result (alpha=1)
+                   # Fix variable names to avoid confusion
+                   display_image = cv2.addWeighted(
+                       self.current_result, alpha,
+                       self.current_image, beta,
+                       0.0
+                   )
+        
         # Resize for preview
-        preview = resize_for_preview(image, *self.PREVIEW_SIZE)
+        preview = resize_for_preview(display_image, *self.PREVIEW_SIZE)
         
         # Convert to PNG bytes
         png_bytes = image_to_bytes(preview, format="PNG")
@@ -662,6 +694,17 @@ class MattingApp:
                 self.window["-PROCESS-"].update(disabled=False)
                 self.is_processing = False
                 sg.popup_error(f"Processing failed:\n\n{error_msg}", title="Error")
+            
+            # Comparison controls
+            elif event == "-COMPARE-SLIDER-":
+                self.comparison_ratio = values["-COMPARE-SLIDER-"] / 100.0
+                if self.current_result is not None:
+                    self._update_preview("-OUTPUT-PREVIEW-", self.current_result)
+            
+            elif event == "-SHOW-ALPHA-":
+                self.show_alpha = values["-SHOW-ALPHA-"]
+                if self.current_result is not None:
+                    self._update_preview("-OUTPUT-PREVIEW-", self.current_result)
             
             # Keyboard shortcuts
             elif event == "-KEY-CTRL-O-":

@@ -100,6 +100,18 @@ def create_main_layout() -> list:
     
     # Settings section
     settings_col1 = sg.Column([
+        [sg.Text("Model:", size=(10, 1))],
+        [sg.Combo(
+            ["MODNet (Fast)", "MODNet Photographic", "RVM MobileNet (Balanced)", "RVM ResNet50 (Quality)"],
+            default_value="MODNet (Fast)",
+            key="-MODEL-",
+            size=(22, 1),
+            readonly=True,
+            enable_events=True,
+        )],
+    ])
+    
+    settings_col2 = sg.Column([
         [sg.Text("Quality:", size=(10, 1))],
         [sg.Combo(
             ["Standard (Fast)", "High (Balanced)", "Ultra (Best)"],
@@ -110,7 +122,7 @@ def create_main_layout() -> list:
         )],
     ])
     
-    settings_col2 = sg.Column([
+    settings_col3 = sg.Column([
         [sg.Text("Background:", size=(12, 1))],
         [sg.Combo(
             ["Transparent", "White", "Black", "Custom Color..."],
@@ -122,13 +134,13 @@ def create_main_layout() -> list:
         )],
     ])
     
-    settings_col3 = sg.Column([
-        [sg.Text("", size=(10, 1))],  # Spacer
+    settings_col4 = sg.Column([
+        [sg.Text("", size=(8, 1))],  # Spacer
         [sg.ColorChooserButton(
             "Pick Color",
             key="-COLOR-PICKER-",
             target="-CUSTOM-COLOR-",
-            size=(12, 1),
+            size=(10, 1),
             disabled=True,
         ),
         sg.Input(key="-CUSTOM-COLOR-", visible=False, enable_events=True)],
@@ -136,7 +148,7 @@ def create_main_layout() -> list:
     
     settings_frame = sg.Frame(
         "Settings",
-        [[settings_col1, settings_col2, settings_col3]],
+        [[settings_col1, settings_col2, settings_col3, settings_col4]],
         relief=sg.RELIEF_GROOVE,
         pad=(0, 10),
     )

@@ -14,14 +14,15 @@ from ..utils.paths import get_cache_dir, get_models_dir
 # Using Hugging Face for reliable CDN hosting
 MODEL_REGISTRY = {
     "modnet": {
-        "name": "MODNet",
-        "description": "Trimap-free portrait matting model (fast, 25MB)",
+        "name": "MODNet (Fast)",
+        "description": "Trimap-free portrait matting - fast, good for portraits",
         "filename": "modnet.onnx",
-        # Using Hugging Face hosted model (more reliable than GitHub raw)
         "url": "https://huggingface.co/gradio/Modnet/resolve/main/modnet.onnx",
         "size_mb": 25,
-        "sha256": None,  # Will verify if provided
+        "sha256": None,
         "requires_trimap": False,
+        "quality": "standard",
+        "input_format": "rgb",  # Model expects RGB normalized input
     },
     "modnet_photographic": {
         "name": "MODNet Photographic",
@@ -31,17 +32,33 @@ MODEL_REGISTRY = {
         "size_mb": 25,
         "sha256": None,
         "requires_trimap": False,
+        "quality": "high",
+        "input_format": "rgb",
     },
-    # MatteFormer - Higher quality but requires trimap (Phase 2: auto-trimap generation)
-    "matteformer": {
-        "name": "MatteFormer",
-        "description": "Transformer-based matting (best quality, requires trimap)",
-        "filename": "matteformer.onnx",
-        "url": None,  # Will be converted from PyTorch checkpoint
-        "size_mb": 100,
+    # RVM - Robust Video Matting, works excellent on single images too
+    "rvm": {
+        "name": "RVM ResNet50 (Quality)",
+        "description": "Robust Video Matting - excellent quality, GPU recommended",
+        "filename": "rvm_resnet50_fp32.onnx",
+        "url": "https://github.com/PeterL1n/RobustVideoMatting/releases/download/v1.0.0/rvm_resnet50_fp32.onnx",
+        "size_mb": 140,
         "sha256": None,
-        "requires_trimap": True,
-        "note": "Phase 2: Will use auto-trimap generation for one-click experience",
+        "requires_trimap": False,
+        "quality": "ultra",
+        "input_format": "rgb",
+        "recurrent": True,  # RVM uses recurrent states
+    },
+    "rvm_mobilenet": {
+        "name": "RVM MobileNet (Balanced)",
+        "description": "Robust Video Matting - good balance of speed and quality",
+        "filename": "rvm_mobilenetv3_fp32.onnx",
+        "url": "https://github.com/PeterL1n/RobustVideoMatting/releases/download/v1.0.0/rvm_mobilenetv3_fp32.onnx",
+        "size_mb": 15,
+        "sha256": None,
+        "requires_trimap": False,
+        "quality": "high",
+        "input_format": "rgb",
+        "recurrent": True,
     },
 }
 

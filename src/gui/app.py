@@ -53,6 +53,15 @@ class MattingApp:
         self.current_result: Optional[np.ndarray] = None
         self.current_path: Optional[Path] = None
         self.is_processing = False
+        self.selected_model = "modnet"  # Default model
+        
+        # Model name mapping from UI display to internal name
+        self._model_map = {
+            "MODNet (Fast)": "modnet",
+            "MODNet Photographic": "modnet_photographic",
+            "RVM MobileNet (Balanced)": "rvm_mobilenet",
+            "RVM ResNet50 (Quality)": "rvm",
+        }
         
         # Initialize theme
         get_theme()
@@ -66,7 +75,7 @@ class MattingApp:
         """
         try:
             self.engine = MattingEngine(
-                model_name="modnet",
+                model_name=self.selected_model,
                 use_gpu=self.config.get("use_gpu", True),
                 auto_download=True,
                 progress_callback=progress_callback,
@@ -618,6 +627,15 @@ class MattingApp:
             
             elif event == "-SETTINGS-":
                 self._show_settings_window()
+            
+            elif event == "-MODEL-":
+                # Model selection changed - need to reinitialize engine
+                model_display = values["-MODEL-"]
+                new_model = self._model_map.get(model_display, "modnet")
+                if new_model != self.selected_model:
+                    self.selected_model = new_model
+                    self.engine = None  # Reset engine to trigger reinitialization
+                    self.window["-STATUS-"].update(f"Model: {model_display}")
             
             elif event == "-ENGINE-PROGRESS-":
                 progress, status = values[event]

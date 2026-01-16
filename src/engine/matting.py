@@ -76,6 +76,11 @@ class MattingEngine:
         self.session: Optional[ort.InferenceSession] = None
         self.input_name: Optional[str] = None
         self.input_shape: Optional[Tuple[int, ...]] = None
+        self.model_info: Optional[dict] = None
+        
+        # RVM recurrent states (for video matting model)
+        self._rvm_rec = None
+        self._rvm_downsample_ratio = 0.25
         
         if auto_download:
             self._initialize_model(progress_callback)
@@ -90,6 +95,9 @@ class MattingEngine:
             self.model_name,
             progress_callback=progress_callback
         )
+        
+        # Get model info from registry
+        self.model_info = self.model_loader.get_available_models().get(self.model_name, {})
         
         # Configure session options
         sess_options = ort.SessionOptions()
@@ -262,19 +270,103 @@ class MattingEngine:
         # Get target resolution
         target_size = QUALITY_CONFIGS[quality]["resolution"]
         
-        # Preprocess
-        input_tensor, original_size, processed_size = self._preprocess(image, target_size)
+        # Check if using RVM model
+        is_rvm = self.model_info.get("recurrent", False) if self.model_info else False
         
-        # Run inference
         start_time = time.perf_counter()
-        outputs = self.session.run(None, {self.input_name: input_tensor})
-        inference_time = time.perf_counter() - start_time
         
-        # Postprocess
-        alpha = self._postprocess(outputs[0], original_size)
+        if is_rvm:
+            # RVM-specific processing
+            alpha = self._process_rvm(image, target_size)
+        else:
+            # MODNet/standard processing
+            input_tensor, original_size, processed_size = self._preprocess(image, target_size)
+            outputs = self.session.run(None, {self.input_name: input_tensor})
+            alpha = self._postprocess(outputs[0], original_size)
+        
+        inference_time = time.perf_counter() - start_time
         
         if return_timing:
             return alpha, inference_time
+        return alpha
+    
+    def _process_rvm(self, image: np.ndarray, target_size: int) -> np.ndarray:
+        """
+        Process image using RVM (Robust Video Matting) model.
+        
+        RVM expects: src (NCHW RGB normalized), rec (4 recurrent states), downsample_ratio
+        Returns: fgr (foreground), pha (alpha), rec outputs
+        """
+        original_h, original_w = image.shape[:2]
+        
+        # Resize to target while maintaining aspect ratio
+        scale = target_size / max(original_h, original_w)
+        new_h = int(original_h * scale)
+        new_w = int(original_w * scale)
+        # Ensure divisible by 16 for RVM
+        new_h = (new_h // 16) * 16
+        new_w = (new_w // 16) * 16
+        new_h = max(new_h, 16)
+        new_w = max(new_w, 16)
+        
+        resized = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        
+        # Normalize to [0, 1] and convert to NCHW
+        src = resized.astype(np.float32) / 255.0
+        src = np.transpose(src, (2, 0, 1))
+        src = np.expand_dims(src, 0)
+        
+        # Initialize recurrent states if needed
+        if self._rvm_rec is None or self._rvm_rec[0].shape[2:] != (new_h, new_w):
+            # Create zero-initialized recurrent states
+            self._rvm_rec = [
+                np.zeros((1, 1, new_h, new_w), dtype=np.float32),
+                np.zeros((1, 1, new_h // 2, new_w // 2), dtype=np.float32),
+                np.zeros((1, 1, new_h // 4, new_w // 4), dtype=np.float32),
+                np.zeros((1, 1, new_h // 8, new_w // 8), dtype=np.float32),
+            ]
+        
+        # Get input names from model
+        input_names = [inp.name for inp in self.session.get_inputs()]
+        
+        # Prepare inputs
+        inputs = {input_names[0]: src}
+        
+        # Add downsample ratio if model expects it
+        if len(input_names) > 1 and "downsample" in input_names[1].lower():
+            inputs[input_names[1]] = np.array([self._rvm_downsample_ratio], dtype=np.float32)
+            
+            # Add recurrent states
+            for i, rec_name in enumerate(input_names[2:6]):
+                if i < len(self._rvm_rec):
+                    inputs[rec_name] = self._rvm_rec[i]
+        
+        # Run inference
+        try:
+            outputs = self.session.run(None, inputs)
+        except Exception as e:
+            # Fallback: try with just src input
+            outputs = self.session.run(None, {input_names[0]: src})
+        
+        # Get alpha from outputs (typically second output: fgr, pha, ...)
+        if len(outputs) >= 2:
+            alpha = outputs[1][0, 0]  # (1, 1, H, W) -> (H, W)
+        else:
+            alpha = outputs[0][0, 0]
+        
+        # Update recurrent states for video processing
+        if len(outputs) >= 6:
+            self._rvm_rec = outputs[2:6]
+        
+        # Clip and convert
+        alpha = np.clip(alpha, 0, 1)
+        
+        # Resize back to original
+        alpha = cv2.resize(alpha, (original_w, original_h), interpolation=cv2.INTER_LINEAR)
+        
+        # Convert to 0-255
+        alpha = (alpha * 255).astype(np.uint8)
+        
         return alpha
     
     def process_with_background(
